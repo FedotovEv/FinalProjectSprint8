@@ -1,30 +1,39 @@
 #include <vector>  
 #include <string>
 
-class Base {  
+class Base
+{
 public:  
   virtual void method() = 0;
-  ~Base() {}
+  ~Base()
+  {}
 };   
 
-class Derived : public Base {  
+class Derived : public Base
+{
 public:  
-  virtual void method() {};
-  virtual ~Derived() {} 
+  virtual void method()
+  {};
+  
+  virtual ~Derived()
+  {} 
 };
 
-class MyType {
+class MyType
+{
 public:
     int id;
     std::string name;
-    MyType(int i, const std::string& n) : id(i), name(n) {}
+    MyType(int i, const std::string& n) : id(i), name(n)
+    {}
 };
 
-void foo() {  
+void foo()
+{
   std::vector<int> v1;  
-  for (const auto x1 : v1) {
-  }  
+  for (const auto x1 : v1)
+  {}  
   std::vector<MyType> vec = {{1, "obj1"}, {2, "obj2"}, {3, "obj3"}};
-  for (const auto x12 : vec) { 
-  }
+  for (const auto& x12 : vec)
+  {}
 }  

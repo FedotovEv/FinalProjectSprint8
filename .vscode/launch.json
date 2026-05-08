@@ -13,6 +13,16 @@
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "GCC: Build Debug",
             "initCommands": ["settings set target.disable-aslr false"]
-        }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Unit tests",
+            "program": "${workspaceFolder}/build/refactor_tool_tests",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "GCC: Build Debug",
+            "initCommands": ["settings set target.disable-aslr false"]
+        }        
     ]
 }
