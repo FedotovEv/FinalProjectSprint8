@@ -1,7 +1,13 @@
 #include "RefactorTool.h"
 #include <clang/AST/DeclCXX.h>
 #include <clang/ASTMatchers/ASTMatchers.h>
+#include <clang/Basic/DiagnosticOptions.h>
+#include <clang/Basic/SourceLocation.h>
 #include <cstdint>
+
+std::unique_ptr<llvm::raw_ostream> CodeRefactorAction::m_log_stream;
+std::unique_ptr<TextDiagnosticPrinter> CodeRefactorAction::m_log_client;
+bool CodeRefactorAction::m_is_log_notes = true;
 
 // Метод run вызывается для каждого совпадения с матчем. 
 // Мы проверяем тип совпадения по bind-именам и применяем рефакторинг.
@@ -35,8 +41,11 @@ void RefactorHandler::handle_nv_dtor(const CXXDestructorDecl* Dtor, DiagnosticsE
     // Интересующий нас явно объявленный деструктор должен начинаться с '~'.
     if (SM.isInMainFile(dtor_begin_loc) && *SM.getCharacterData(dtor_begin_loc) == '~')
     {
-        const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Объявлен невиртуальный деструктор");
-        Diag.Report(dtor_begin_loc, DiagID);
+        if (m_is_output_notes)
+        {
+            const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Note, "Объявлен невиртуальный деструктор");
+            Diag.Report(dtor_begin_loc, DiagID);
+        }
         virtualDtorPtrs.insert(Dtor);   // Откладываем полученный деструктор для последующей обработки.
     }
 }
@@ -47,19 +56,13 @@ void RefactorHandler::handle_miss_override(const CXXMethodDecl* Method, Diagnost
     SourceLocation method_end_loc = Method->getNameInfo().getEndLoc();
     if (SM.isInMainFile(method_end_loc))
     {
-        const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Объявлен переопределяющий метод без спецификатора override");
+        const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Установлен спецификатор override для переопределяющего метода");
         Diag.Report(Method->getLocation(), DiagID);
 
         const char* method_end_pos = SM.getCharacterData(method_end_loc);
         // Отыскиваем символ ')', закрывающий блок формальных параметров метода Method. Именно после него будет вставлен спецификатор "override".
         for (; *method_end_pos != ')'; ++method_end_pos);
         ++method_end_pos;   // Позиция предстоящей вставки спецификатора override сразу после закрывающей скобки блока формальных параметров.
-
-        /*
-        // Предотвращаем повторную вставку override в одну и ту же позицию.
-        if (!overrideInsertLocations.insert(reinterpret_cast<uintptr_t>(method_end_pos)).second)
-            return;     // Спецификатор override ранее в это положение уже вставлялся.
-        */
 
         SourceLocation override_insert_loc =
             method_end_loc.getLocWithOffset(method_end_pos - SM.getCharacterData(method_end_loc));
@@ -73,13 +76,20 @@ void RefactorHandler::handle_crange_for(const VarDecl* LoopVar, DiagnosticsEngin
     SourceLocation loop_varname_end_loc = LoopVar->getEndLoc();
     if (SM.isInMainFile(loop_varname_end_loc) && !LoopVar->getType()->isReferenceType())
     {
-        const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Найдена константная нессылочная рабочая переменная диапазонного цикла");
-        Diag.Report(LoopVar->getLocation(), DiagID);
-
+        if (m_is_output_notes)
+        {
+            const unsigned DiagID =
+                Diag.getCustomDiagID(DiagnosticsEngine::Note, "Найдена константная нессылочная рабочая переменная диапазонного цикла");
+            Diag.Report(LoopVar->getLocation(), DiagID);
+        }
         if (LoopVar->getType()->isBuiltinType())
         {
-            const unsigned BuiltinTypeDiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Отказ от действия - переменная фундаментального типа");
-            Diag.Report(BuiltinTypeDiagID);
+            if (m_is_output_notes)
+            {
+                const unsigned BuiltinTypeDiagID =
+                    Diag.getCustomDiagID(DiagnosticsEngine::Note, "Отказ от действия - переменная фундаментального типа");
+                Diag.Report(BuiltinTypeDiagID);
+            }
             return;
         }
         // Найденная конструкция находится внутри основного анализируемого файла (не внутри вложенных заголовков), а переменная не относится к
@@ -91,7 +101,10 @@ void RefactorHandler::handle_crange_for(const VarDecl* LoopVar, DiagnosticsEngin
         for (; *var_defterm_pos != ' '; --var_defterm_pos); // Далее выполняем пропуск самого имени переменной.
         for (; *var_defterm_pos == ' '; --var_defterm_pos); // Наконец, находим конечный символ искомого имени типа.
         ++var_defterm_pos;  // Расчёт окончательного положения точки вставки.
-
+        //
+        const unsigned DiagOpID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Переменная диапазонного цикла преобразована в ссылку");
+        Diag.Report(LoopVar->getLocation(), DiagOpID);
+        //
         SourceLocation ref_insert_loc =
             loop_varname_end_loc.getLocWithOffset(var_defterm_pos - SM.getCharacterData(loop_varname_end_loc));
 
@@ -104,23 +117,19 @@ void RefactorHandler::handle_derived_class(const CXXRecordDecl* ClassDecl, Diagn
 {
     if (SM.isInMainFile(ClassDecl->getLocation()))
     {
-        const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Найден наследующий класс");
-        Diag.Report(ClassDecl->getLocation(), DiagID);
+        if (m_is_output_notes)
+        {
+            const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Note, "Найден наследующий класс");
+            Diag.Report(ClassDecl->getLocation(), DiagID);
+        }
         // Вставляем во множество-сборщик allBaseClassCollection все базовые классы текущего производного класса ClassDecl.
         // так как теперь ясно, что они достоверно имеют каких-либо наследников.
-        allBaseClassCollection.insert(ClassDecl->bases_begin(), ClassDecl->bases_end());
+        for (const CXXBaseSpecifier& base_class_spec : ClassDecl->bases())
+            allBaseClassCollection.insert(base_class_spec.getType()->getAsCXXRecordDecl());
     }
 }
 
 //todo: ниже необходимо реализовать матчеры для поиска узлов AST
-//note: синтаксис написания матчеров точно такой же как и для использования clang-query
-/*
-    Пример того, как может выглядеть реализация:
-    auto AllClassesMatcher()
-    {
-        return cxxRecordDecl().bind("classDecl");
-    }
-*/
 auto NvDtorMatcher()
 {
     // Матчер обнаружения только невиртуальных деструкторов и только в том случае, если класс, для которого такой деструктор определен,
@@ -144,9 +153,9 @@ auto NoRefConstVarInRangeLoopMatcher()
 {
     // Обнаруживаются определения переменных, являющихся рабочими для диапазонного цикла, объявленными константными, но не являющиеся ссылками.
     return varDecl
-        (hasAncestor(cxxForRangeStmt()),
-         hasType(isConstQualified()),
-         unless(hasType(referenceType())))
+        (hasAncestor(cxxForRangeStmt()),    // Предок - диапазонный цикл.
+         hasType(isConstQualified()),            // Переменная константного типа.
+         unless(hasType(referenceType())))       // Но пока не ссылка.
         .bind("NonReferenceConstRangeLoopVar");
 }
 
@@ -156,8 +165,9 @@ auto AllClassesMatcher()
     return cxxRecordDecl(hasAnyBase(anything())).bind("DerivedClass");
 }
 
-// Конструктор принимает Rewriter для изменения кода.
-ComplexConsumer::ComplexConsumer(Rewriter& Rewrite) : Handler(Rewrite)
+// Конструктор принимает Rewriter для изменения кода и набор прочих параметров, управляющих некоторыми иными аспектами рабочего процесса.
+ComplexConsumer::ComplexConsumer(Rewriter& Rewrite, const ConsumerParams& Parameters) :
+    Handler(Rewrite), Params(Parameters)
 {
     // Создаем MatchFinder и добавляем матчеры.
     Finder.addMatcher(NvDtorMatcher(), &Handler);
@@ -167,29 +177,46 @@ ComplexConsumer::ComplexConsumer(Rewriter& Rewrite) : Handler(Rewrite)
 }
 
 // Метод HandleTranslationUnit вызывается для каждого файла.
-void ComplexConsumer::HandleTranslationUnit(ASTContext &Context)
+void ComplexConsumer::HandleTranslationUnit(ASTContext& Context)
 {
+    auto& Diag = Context.getDiagnostics();
+    if (Params.m_log_client)
+        Diag.setClient(Params.m_log_client, false);
+
     Finder.matchAST(Context);
     // Теперь мы можем выяснить необходимость "виртуализации" деструктора для всех тех классов, у которых он сейчас
     // невиртуальный, но при этом они имеют наследников. Предварительно все подозреваемые деструкторы (точнее, указатели
     // на соответствующим узлы в AST) накоплены во множестве virtualDtorPtrs.
     for (const CXXDestructorDecl* try_dtor : Handler.virtualDtorPtrs)
     {
-        try_dtor->getParent();
+        if (Handler.allBaseClassCollection.find(try_dtor->getParent()) != Handler.allBaseClassCollection.end())
+        {   // Класс, к которому принадлежит невиртуальный деструктор try_dtor, имеет наследников.
+            SourceLocation virtual_insert_pos = try_dtor->getLocation();
+            Handler.Rewrite.InsertTextBefore(virtual_insert_pos, "virtual "s);
+            // Отчёт в протокол о выполненном действии.
+            const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Выполнена виртуализация деструктора");
+            Diag.Report(virtual_insert_pos, DiagID);
+        }
     }
-
 }
 
-std::unique_ptr<ASTConsumer> CodeRefactorAction::CreateASTConsumer(CompilerInstance &CI, StringRef file)
+std::unique_ptr<ASTConsumer> CodeRefactorAction::CreateASTConsumer(CompilerInstance& CI, StringRef file)
 {
     RewriterForCodeRefactor.setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
-    return std::make_unique<ComplexConsumer>(RewriterForCodeRefactor);
+    // Создаем и настраиваем объект обработчика узлов AST.
+    ComplexConsumer::ConsumerParams consumer_params;
+    if (m_log_stream)
+        consumer_params.m_log_client = m_log_client.get();
+    consumer_params.m_is_log_notes = m_is_log_notes;
+    return std::make_unique<ComplexConsumer>(RewriterForCodeRefactor, consumer_params);
 }
 
 bool CodeRefactorAction::BeginSourceFileAction(CompilerInstance& CI)
 {
     // Инициализируем Rewriter для рефакторинга.
     RewriterForCodeRefactor.setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
+    if (m_log_client)
+        m_log_client->BeginSourceFile(CI.getLangOpts(), nullptr);
     return true;  // Возвращаем true, чтобы продолжить обработку файла.
 }
 
@@ -197,7 +224,20 @@ void CodeRefactorAction::EndSourceFileAction()
 {
     // Применяем изменения в файле.
     if (RewriterForCodeRefactor.overwriteChangedFiles())
-    {
-        llvm::errs() << "Error applying changes to files.\n";
+        llvm::errs() << "Ошибка при внесении изменений в файл.\n";
+    if (m_log_client)
+        m_log_client->EndSourceFile();
+}
+
+void CodeRefactorAction::SetLogParams(std::unique_ptr<llvm::raw_ostream>&& p_log_stream, bool p_is_log_notes)
+{
+    m_log_client.reset();
+    m_log_stream.reset();
+
+    if (p_log_stream)
+    {    
+        m_log_stream = std::move(p_log_stream);
+        m_log_client = std::make_unique<TextDiagnosticPrinter>(*m_log_stream.get(), new DiagnosticOptions);
     }
+    m_is_log_notes = p_is_log_notes;
 }

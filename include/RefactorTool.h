@@ -7,8 +7,10 @@
 #include "clang/Tooling/Refactoring.h"
 #include "clang/Rewrite/Core/Rewriter.h"
 #include "llvm/Support/CommandLine.h"
+#include "clang/Frontend/TextDiagnosticPrinter.h"
 
 #include <clang/AST/DeclCXX.h>
+#include <clang/Basic/Diagnostic.h>
 #include <cstdint>
 #include <unordered_set>
 
@@ -58,31 +60,46 @@ private:
     // Набор массивов для выполнения подстановки спецификатора virtual в деструкторы базовых классов.
     std::unordered_set<const CXXDestructorDecl*> virtualDtorPtrs;
     std::unordered_set<const CXXRecordDecl*> allBaseClassCollection;
-    // Аналогично для позиций вставки override фактически переопределяющих методов классов.
-    //std::unordered_set<uintptr_t> overrideInsertLocations;
+    bool m_is_output_notes = false;    // Следует ли выводить в лог чисто информационные заметки.
 };
 
 class ComplexConsumer : public clang::ASTConsumer
 {
 public:
+    struct ConsumerParams
+    {
+        ConsumerParams() : m_log_client(nullptr), m_is_log_notes(true)
+        {}
+        // Все описанные ниже поля-указатели управляют системой логирования программы и являются невладеющими.
+        // Владение же всеми этими объектами сосредоточено в классе CodeRefactorAction.        
+        TextDiagnosticPrinter* m_log_client;
+        bool m_is_log_notes;
+    };
+
     // Конструктор принимает Rewriter для изменения кода.
-    explicit ComplexConsumer(clang::Rewriter &Rewrite);
+    explicit ComplexConsumer(clang::Rewriter& Rewrite, const ConsumerParams& Parameters = ConsumerParams{});
     // Метод HandleTranslationUnit вызывается для каждого файла.
-    void HandleTranslationUnit(clang::ASTContext &Context) override;
+    void HandleTranslationUnit(clang::ASTContext& Context) override;
 
 private:
     RefactorHandler Handler;                                // Обработчик матчеров.
     clang::ast_matchers::MatchFinder Finder;                // MatchFinder для поиска узлов AST.
+    ConsumerParams Params;
 };
 
 class CodeRefactorAction : public clang::ASTFrontendAction
 {
 public:
-  // Returns our ASTConsumer per translation unit.
-  virtual std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(clang::CompilerInstance &CI, clang::StringRef file) override;
-  virtual bool BeginSourceFileAction( clang::CompilerInstance &CI) override;
-  virtual void EndSourceFileAction() override;
+    // Функция-член создает отдельный ASTConsumer нашего собственного типа ComplexConsumer для каждой единицы трансляции.
+    virtual std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(clang::CompilerInstance& CI, clang::StringRef file) override;
+    virtual bool BeginSourceFileAction(clang::CompilerInstance& CI) override;
+    virtual void EndSourceFileAction() override;
+    static void SetLogParams(std::unique_ptr<llvm::raw_ostream>&& p_log_stream, bool p_is_log_notes = true);
 
 private:
-  clang::Rewriter RewriterForCodeRefactor;
+    clang::Rewriter RewriterForCodeRefactor;
+    // Статические параметры настройки режима логирования, которые применяются для всех создаваемых ComplexConsumer.
+    static std::unique_ptr<llvm::raw_ostream> m_log_stream;
+    static std::unique_ptr<TextDiagnosticPrinter> m_log_client;
+    static bool m_is_log_notes;
 };

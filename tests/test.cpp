@@ -3,21 +3,13 @@
 #include <exception>
 #include <gtest/gtest.h>
 //
-#include "clang/ASTMatchers/ASTMatchers.h"
-#include "clang/ASTMatchers/ASTMatchFinder.h"
-#include "clang/Frontend/FrontendActions.h"
-#include "clang/Tooling/CommonOptionsParser.h"
-#include "clang/Tooling/Tooling.h"
-#include "clang/Tooling/Refactoring.h"
-#include "clang/Rewrite/Core/Rewriter.h"
-#include "llvm/Support/CommandLine.h"
-#include "../include/RefactorTool.h"
+#include "test_helper.h"
+#include "RefactorTool.h"
 //
 #include <filesystem>
+#include <initializer_list>
 #include <stdexcept>
 #include <fstream>
-
-static std::string REFACTOR_TOOL_EXECUTABLE = "./build/refactor_tool";
 
 using namespace clang;
 using namespace clang::ast_matchers;
@@ -27,12 +19,25 @@ using namespace std::literals;
 //
 namespace fs = std::filesystem;
 
+// Основной класс, в котором сосредоточены все базовые тестовые и проверочные операции, организующие запуск операции
+// автоматического рефакторинга эталона и позволяющие убедиться в правильном её выполнении.
 class TempRefactorFileData
 {
 public:
+    static constexpr char FILE_REFACTOR_NAME[] = "file_to_refactor.cpp";
+    static constexpr char REF_FILE_REFACTOR_NAME[] = "file_to_refactor_ref.cpp";
+    static constexpr char REFACTOR_TOOL_EXECUTABLE[] = "./build/refactor_tool";
+
+    struct RefactorLogPattern
+    {
+        int line_number;
+        int symbol_number;
+        DiagnosticsEngine::Level log_level;
+    };
+
     TempRefactorFileData(const std::string& refactor_data)
     {
-        m_refactor_filepath = fs::temp_directory_path() / fs::path("file_to_refactor.cpp"s);
+        m_refactor_filepath = fs::temp_directory_path() / fs::path(FILE_REFACTOR_NAME);
         // Создадим тестовый файл в рекомендованном временном каталоге.
         std::ofstream ofstr(m_refactor_filepath);
         {
@@ -46,7 +51,7 @@ public:
         }
         // Создаём также копию созданного выше файла, которая далее будет служить как эталон для сравнения
         // результата автоматического рефакторинга.
-        m_refactor_ref_filepath = fs::temp_directory_path() / fs::path("file_to_refactor_ref.cpp"s);
+        m_refactor_ref_filepath = fs::temp_directory_path() / fs::path(REF_FILE_REFACTOR_NAME);
         try
         {
             fs::remove(m_refactor_ref_filepath);
@@ -58,6 +63,7 @@ public:
             fs::remove(m_refactor_ref_filepath);
             throw std::runtime_error("Ошибка при создании тестового файла-эталона - "s + fs_err.what());
         }
+        MyGlobalEnvironment::ClearMessageLog();
     }
 
     int ProcessTest()
@@ -82,13 +88,11 @@ public:
         CommonOptionsParser& OptionsParser = ExpectedParser.get();
         // Создаем ClangTool
         ClangTool Tool(OptionsParser.getCompilations(), OptionsParser.getSourcePathList());
-        // Конструируем фабрику рефакторизирующих процессоров и получаем созданный в ней объект-рефакторизатор.
-        std::unique_ptr<FrontendActionFactory> refactor_action_factory = newFrontendActionFactory<CodeRefactorAction>();
-        // Запускаем RefactorAction.
-        return Tool.run(refactor_action_factory.get());
+        // Конструируем фабрику рефакторизирующих процессоров и Запускаем RefactorAction.
+        return Tool.run(newFrontendActionFactory<CodeRefactorAction>().get());
     }
 
-    void PrintFile(bool is_ref, std::ostream& ostr)
+    void PrintFile(bool is_ref, std::ostream& ostr) const
     {
         std::ifstream ifstr;
         if (!is_ref)
@@ -110,6 +114,50 @@ public:
             fs::remove(m_refactor_filepath);
         if (!m_refactor_ref_filepath.empty())
             fs::remove(m_refactor_ref_filepath);
+    }
+
+    bool TestRefactorLog(std::initializer_list<RefactorLogPattern> test_list)
+    {
+        std::string check_log = MyGlobalEnvironment::GetMessageLog();
+        std::initializer_list<RefactorLogPattern>::const_iterator scan_list_elem = test_list.begin();
+        size_t scan_log_pos = 0;
+        while (scan_log_pos < check_log.size() && scan_list_elem != test_list.end())
+        {
+            const RefactorLogPattern& ref_pattern = *scan_list_elem;
+            std::string test_list_pattern = std::string(FILE_REFACTOR_NAME) + ':' + std::to_string(ref_pattern.line_number) + ':'
+                                            + std::to_string(ref_pattern.symbol_number) + ": "s;
+            switch (ref_pattern.log_level)
+            {
+                case DiagnosticsEngine::Level::Ignored:
+                    test_list_pattern += "ignored"s;
+                    break;
+                case DiagnosticsEngine::Level::Note:
+                    test_list_pattern += "note"s;
+                    break;                    
+                case DiagnosticsEngine::Level::Remark:
+                    test_list_pattern += "remark"s;
+                    break;
+                case DiagnosticsEngine::Level::Warning:
+                    test_list_pattern += "warning"s;
+                    break;
+                case DiagnosticsEngine::Level::Error:
+                    test_list_pattern += "error"s;
+                    break;
+                case DiagnosticsEngine::Level::Fatal:
+                    test_list_pattern += "fatal"s;
+                    break;
+                default:
+                    break;
+            }
+            // Пробуем обнаружить образец test_list_pattern в теле лога check_log, начиная с текущей поисковой позиции scan_log_pos.
+            size_t found_pattern_pos = check_log.find(test_list_pattern,  scan_log_pos);
+            if (found_pattern_pos == std::string::npos)
+                return false;   // Очередной требуемый элемент протокола не найден в его теле.
+            
+            scan_log_pos = found_pattern_pos + test_list_pattern.size();
+            ++scan_list_elem;
+        }
+        return scan_list_elem == test_list.end();   // Возвращаем "ИСТИНУ", если все нужные позиционные термы обнаружены в тексте лога.
     }
 
 private:
@@ -179,8 +227,20 @@ public:
         TempRefactorFileData test_rabbit_1(test_rabbit_body_1);
         ASSERT_EQ(test_rabbit_1.ProcessTest(), 0);
         //
-        test_rabbit_1.PrintFile(false, std::cerr);
-        std::cerr << std::endl;
+        // test_rabbit_1.PrintFile(false, std::cerr);
+        // std::cerr << std::endl;
+        // std::cerr << MyGlobalEnvironment::GetMessageLog() << std::endl;        
+        //
+        ASSERT_TRUE(test_rabbit_1.TestRefactorLog
+            (
+            {
+                    {17, 10, DiagnosticsEngine::Level::Remark},
+                    {19, 10, DiagnosticsEngine::Level::Remark},
+                    {21, 5, DiagnosticsEngine::Level::Remark},
+                    {28, 10, DiagnosticsEngine::Level::Remark},
+                    {30, 10, DiagnosticsEngine::Level::Remark}
+                }
+            ));
     }
     catch (const std::exception& excpt)
     {
@@ -194,8 +254,11 @@ public:
         TempRefactorFileData test_rabbit_2(test_rabbit_body_2);
         ASSERT_EQ(test_rabbit_2.ProcessTest(), 0);
         //
-        test_rabbit_2.PrintFile(false, std::cerr);
-        std::cerr << std::endl;
+        // test_rabbit_2.PrintFile(false, std::cerr);
+        // std::cerr << std::endl;
+        // std::cerr << MyGlobalEnvironment::GetMessageLog() << std::endl;
+        // Так как никаких модифицирующих операций выполняться не должно, лог будет оставаться пустым.
+        ASSERT_TRUE(MyGlobalEnvironment::GetMessageLog().empty());
     }
     catch (const std::exception& excpt)
     {
@@ -262,8 +325,17 @@ void process()
         TempRefactorFileData test_rabbit_1(test_rabbit_body_1);
         ASSERT_EQ(test_rabbit_1.ProcessTest(), 0);
         //
-        test_rabbit_1.PrintFile(false, std::cerr);
-        std::cout << std::endl;
+        // test_rabbit_1.PrintFile(false, std::cerr);
+        // std::cout << std::endl;
+        // std::cerr << MyGlobalEnvironment::GetMessageLog() << std::endl;
+        ASSERT_TRUE(test_rabbit_1.TestRefactorLog
+            (
+            {
+                    {17, 21, DiagnosticsEngine::Level::Remark},
+                    {23, 27, DiagnosticsEngine::Level::Remark},
+                    {29, 44, DiagnosticsEngine::Level::Remark}
+                }
+            ));
     }
     catch (const std::exception& excpt)
     {
@@ -324,8 +396,16 @@ public:
         TempRefactorFileData test_rabbit_1(test_rabbit_body_1);
         ASSERT_EQ(test_rabbit_1.ProcessTest(), 0);
         //
-        test_rabbit_1.PrintFile(false, std::cerr);
-        std::cout << std::endl;
+        // test_rabbit_1.PrintFile(false, std::cerr);
+        // std::cout << std::endl;
+        // std::cerr << MyGlobalEnvironment::GetMessageLog() << std::endl;
+        ASSERT_TRUE(test_rabbit_1.TestRefactorLog
+            (
+            {
+                    {15, 5, DiagnosticsEngine::Level::Remark},
+                    {6, 5, DiagnosticsEngine::Level::Remark}
+                }
+            ));        
     }
     catch (const std::exception& excpt)
     {

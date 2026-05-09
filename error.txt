@@ -1,0 +1,6 @@
+/workspaces/FinalProjectSprint8/tests/tests_data/for_refactor.cpp:15:16: remark: Установлен спецификатор override для переопределяющего метода
+   15 |   virtual void method()
+      |                ^
+/workspaces/FinalProjectSprint8/tests/tests_data/for_refactor.cpp:8:3: remark: Выполнена виртуализация деструктора
+    8 |   ~Base()
+      |   ^
