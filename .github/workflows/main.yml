@@ -1,0 +1,24 @@
+
+name: Run Program on Commit
+
+# Триггер: запускать при push в main
+on: push
+
+jobs:
+  build:
+    # Тип машины, на которой будет выполняться действие
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Получаем код репозитория во внутреннюю файловую систему исполняющей задание виртуальной машины.
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. Запуск ASAN-теста
+      - name: Run leak example test
+        run: |
+            echo "Запуск проверки устранения утечек памяти после автоматического рефактоинга."
+            cp -f leak_example.cpp leak_example_org.cpp   # Копируем исходный пример с ошибкой, приводящей к утечке памяти.
+            ./refactor_tool leak_example_org.cpp		# Производим его рефакторинг, который должен эту ошибку устранить.
+	        g++ leak_example_org.cpp -fsanitize=address -o leak_example_org  # Компиляция исправленного файла в чистилище.
+	        ./leak_example_org				# Запуск инструментированного файла для контроля отсутствия утечки.

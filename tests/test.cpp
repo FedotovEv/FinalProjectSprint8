@@ -233,7 +233,7 @@ public:
         //
         ASSERT_TRUE(test_rabbit_1.TestRefactorLog
             (
-            {
+                {
                     {17, 10, DiagnosticsEngine::Level::Remark},
                     {19, 10, DiagnosticsEngine::Level::Remark},
                     {21, 5, DiagnosticsEngine::Level::Remark},
@@ -330,7 +330,7 @@ void process()
         // std::cerr << MyGlobalEnvironment::GetMessageLog() << std::endl;
         ASSERT_TRUE(test_rabbit_1.TestRefactorLog
             (
-            {
+                {
                     {17, 21, DiagnosticsEngine::Level::Remark},
                     {23, 27, DiagnosticsEngine::Level::Remark},
                     {29, 44, DiagnosticsEngine::Level::Remark}
@@ -401,15 +401,102 @@ public:
         // std::cerr << MyGlobalEnvironment::GetMessageLog() << std::endl;
         ASSERT_TRUE(test_rabbit_1.TestRefactorLog
             (
-            {
+                {
                     {15, 5, DiagnosticsEngine::Level::Remark},
                     {6, 5, DiagnosticsEngine::Level::Remark}
                 }
-            ));        
+            ));
     }
     catch (const std::exception& excpt)
     {
         std::cerr << "Возникло исключение - " << excpt.what() << std::endl;
         ASSERT_TRUE(false);
     }
+}
+
+// Тест, демонстрирующий вставку модификатора override для функций, уже имеющих в своей сигнатуре суффиксы типа &, &&, const, final или noexcept.
+TEST(ConstRefMethodsSuite, ConstRefMethodsOverrideTest)
+{
+    const std::string test_rabbit_body_1 = R"--(    
+#include <string>
+
+class Base
+{
+public:
+    virtual void func_0()
+    {}
+    virtual void func_1() const
+    {}
+    virtual void func_1(int a) & = 0;
+    virtual void func_1(double a) &&
+    {}
+    virtual void func_1(std::string a) const &
+    {}
+    virtual void func_2(int a) noexcept((bool)(2 + 3))
+    {}
+    virtual void func_2(float a) noexcept = 0;
+    virtual void func_2(double a) &&
+    {}
+    virtual void func_2(std::string a) noexcept
+    {}
+    virtual ~Base()
+    {}
+};
+
+class Derived : public Base
+{
+public:
+    void func_0()                       // Переопределен без override
+    {}
+    void func_1() const                 // Переопределен без override
+    {}
+    void func_1(int a) &                // Переопределен без override
+    {}
+    void func_1(double a) &&            // Переопределен без override
+    {}
+    void func_1(std::string a) const &  // Переопределен без override
+    {}
+    void func_2(int a) noexcept((bool)(2 + 3))  // Переопределен без override
+    {}
+    void func_2(float a) noexcept               // Переопределен без override
+    {}
+    void func_2(double a) && final              // Переопределен без override
+    {}
+    void func_2(std::string a) noexcept final   // Переопределен без override
+    {}    
+    ~Derived()                         // Деструктор без override
+    {}
+}; 
+    )--";
+
+    try
+    {
+        TempRefactorFileData test_rabbit_1(test_rabbit_body_1);
+        ASSERT_EQ(test_rabbit_1.ProcessTest(), 0);
+        //
+        // test_rabbit_1.PrintFile(false, std::cerr);
+        // std::cout << std::endl;
+        // std::cerr << MyGlobalEnvironment::GetMessageLog() << std::endl;
+        //
+        ASSERT_TRUE(test_rabbit_1.TestRefactorLog
+            (
+        {
+                    {30, 10, DiagnosticsEngine::Level::Remark},
+                    {32, 10, DiagnosticsEngine::Level::Remark},
+                    {34, 10, DiagnosticsEngine::Level::Remark},
+                    {36, 10, DiagnosticsEngine::Level::Remark},
+                    {38, 10, DiagnosticsEngine::Level::Remark},
+                    {40, 10, DiagnosticsEngine::Level::Remark},
+                    {42, 10, DiagnosticsEngine::Level::Remark},
+                    {44, 10, DiagnosticsEngine::Level::Remark},
+                    {46, 10, DiagnosticsEngine::Level::Remark},
+                    {48, 5, DiagnosticsEngine::Level::Remark}
+                }
+            ));
+    }
+    catch (const std::exception& excpt)
+    {
+        std::cerr << "Возникло исключение - " << excpt.what() << std::endl;
+        ASSERT_TRUE(false);
+    }    
 }

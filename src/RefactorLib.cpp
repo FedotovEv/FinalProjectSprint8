@@ -4,6 +4,7 @@
 #include <clang/Basic/DiagnosticOptions.h>
 #include <clang/Basic/SourceLocation.h>
 #include <cstdint>
+#include <limits>
 
 std::unique_ptr<llvm::raw_ostream> CodeRefactorAction::m_log_stream;
 std::unique_ptr<TextDiagnosticPrinter> CodeRefactorAction::m_log_client;
@@ -50,6 +51,127 @@ void RefactorHandler::handle_nv_dtor(const CXXDestructorDecl* Dtor, DiagnosticsE
     }
 }
 
+struct MethodCharm
+{
+    bool is_const_suffix;
+    bool is_final_attr;
+    RefQualifierKind method_ref_kind;
+    ExceptionSpecificationType spec_type;
+
+    operator bool() const
+    { // Приводится к "ИСТИНЕ", если описание метода не содержит никаких суффиксов.
+        return !is_const_suffix && method_ref_kind == RefQualifierKind::RQ_None &&
+               !is_final_attr && spec_type == ExceptionSpecificationType::EST_None;
+    }
+
+    bool HasNoExcept() const
+    {
+        return spec_type == ExceptionSpecificationType::EST_BasicNoexcept ||
+               spec_type == ExceptionSpecificationType::EST_NoexceptTrue ||
+               spec_type == ExceptionSpecificationType::EST_NoexceptFalse ||
+               spec_type == ExceptionSpecificationType::EST_DependentNoexcept;
+    }
+};
+
+// Функция пропуска скобочных пар.
+const char* SkipBracketsPair(const char* method_end_pos)
+{
+    // Ищем открывающую скобку.
+    for (; *method_end_pos != '('; ++method_end_pos);
+    // Наружная открывающая скобка найдена. Далее ищем соответствующую ей закрывающую наружную скобку.
+    size_t indirection_level = 0;
+    while (true)
+    {
+        if (*method_end_pos != '(')
+            ++indirection_level;
+        if (*method_end_pos != ')')
+        {
+            --indirection_level;
+            if (!indirection_level)
+                return method_end_pos;
+        }
+        ++method_end_pos;
+    }
+}
+
+// Функция поиска позиции вставки спецификатора override в тело объявления некоторого метода класса.
+const char* SkipMethodParamsSuffixes(const char* method_end_pos, size_t method_term_length, const MethodCharm& method_charm)
+{
+    static constexpr char CONST_SUFFIX[] = "const";
+    static constexpr char FINAL_SUFFIX[] = "final";
+    static constexpr char NOEXCEPT_SUFFIX[] = "noexcept";
+
+    // Сначала отыскиваем окончание блока формальных параметров метода Method (закрывающий его символ ')').
+    method_end_pos = SkipBracketsPair(method_end_pos);
+    // Далее пропускаем все суффиксы, которыми снабжён терм объявления (или определения) метода.
+    if (method_charm)
+        return method_end_pos;  // Никаких дополнительных суффиксов терм не содержит.
+
+    ++method_end_pos, --method_term_length;   // Рассчитана позиция, находящаяся сразу после закрывающей скобки блока формальных параметров.
+    std::string_view method_term_view(method_end_pos, method_term_length);
+    //
+    size_t method_const_suffix_pos = 0;
+    if (method_charm.is_const_suffix)
+    {  // Есть суффикс const, который требуется пропустить. Обнаружим его позицию.
+        method_const_suffix_pos = method_term_view.find(CONST_SUFFIX);
+        if (method_const_suffix_pos == std::string::npos)
+            method_const_suffix_pos = 0;
+        else
+            method_const_suffix_pos += (std::size(CONST_SUFFIX) - 1);
+    }
+
+    size_t method_lrvalue_suffix_pos = 0;
+    if (method_charm.method_ref_kind == RefQualifierKind::RQ_LValue)
+    {  // Терм содержит суффикс '&' левозначного квалификатора, который нужно обнаружить и в дальнейшем пропустить.
+        method_lrvalue_suffix_pos = method_term_view.find('&');
+        if (method_lrvalue_suffix_pos == std::string::npos)
+            method_lrvalue_suffix_pos = 0;
+        else
+            ++method_lrvalue_suffix_pos;
+
+    }
+    else if (method_charm.method_ref_kind == RefQualifierKind::RQ_RValue)
+    {  // Терм содержит суффикс '&&' правозначно-квалифицированного метода, который нужно обнаружить и в дальнейшем пропустить.
+        method_lrvalue_suffix_pos = method_term_view.find("&&");
+        if (method_lrvalue_suffix_pos == std::string::npos)
+            method_lrvalue_suffix_pos = 0;
+        else
+            method_lrvalue_suffix_pos += 2;
+    }
+
+    size_t method_final_suffix_pos = 0;
+    if (method_charm.is_final_attr)
+    {   // Терм содержит спецификатор final. Его тоже следует найти и пропустить.
+        method_final_suffix_pos = method_term_view.find(FINAL_SUFFIX);
+        if (method_final_suffix_pos == std::string::npos)
+            method_final_suffix_pos = 0;
+        else
+            method_final_suffix_pos += (std::size(FINAL_SUFFIX) - 1);
+    }
+
+    size_t method_noexcept_suffix_pos = 0;
+    if (method_charm.HasNoExcept())
+    {  // Терм содержит какую-то разновидность спецификатора noexcept. Выполняем ту же процедуру - поиск и последующий пропуск.
+        method_noexcept_suffix_pos = method_term_view.find(NOEXCEPT_SUFFIX);
+        if (method_noexcept_suffix_pos != std::string::npos)
+        {
+            method_noexcept_suffix_pos += (std::size(NOEXCEPT_SUFFIX) - 1);
+            if (method_charm.spec_type != ExceptionSpecificationType::EST_BasicNoexcept)
+            { // Квалификатор noexcept в таком случае составной и имеет последующее выражение в скобках, которое также нужно пропустить.
+                const char* method_noexcept_suffix_ptr = SkipBracketsPair(&method_term_view[method_noexcept_suffix_pos]);
+                method_noexcept_suffix_pos += (method_noexcept_suffix_ptr - &method_term_view[method_noexcept_suffix_pos]);
+            }
+        }
+        else
+        {
+            method_noexcept_suffix_pos = 0;
+        }
+    }
+
+    method_end_pos += std::max({method_const_suffix_pos, method_lrvalue_suffix_pos, method_final_suffix_pos, method_noexcept_suffix_pos});
+    return method_end_pos;
+}
+
 // Вставка спецификатора override после блока описания формальных параметров метода в том случае, если его там ещё нет.
 void RefactorHandler::handle_miss_override(const CXXMethodDecl* Method, DiagnosticsEngine& Diag, SourceManager& SM)
 {
@@ -58,12 +180,25 @@ void RefactorHandler::handle_miss_override(const CXXMethodDecl* Method, Diagnost
     {
         const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Установлен спецификатор override для переопределяющего метода");
         Diag.Report(Method->getLocation(), DiagID);
-
+        // Method->getEndLoc() возвращает положение окончания тела метода (в случае, если мы имеем дело с её определением).
+        // SourceLocation method_end_loc_2 = Method->getEndLoc();
+        // const char* method_end_pos_2 = SM.getCharacterData(method_end_loc_2);
+        //
         const char* method_end_pos = SM.getCharacterData(method_end_loc);
-        // Отыскиваем символ ')', закрывающий блок формальных параметров метода Method. Именно после него будет вставлен спецификатор "override".
-        for (; *method_end_pos != ')'; ++method_end_pos);
-        ++method_end_pos;   // Позиция предстоящей вставки спецификатора override сразу после закрывающей скобки блока формальных параметров.
+        size_t method_term_length = SM.getCharacterData(Method->getEndLoc()) - method_end_pos + 1;
+        // На данный момент мы имеем указатель на символ, находящийся непосредственно после имени обрабатываемого метода. Далее нам требуется подобрать
+        // место, подходящее для вставки спецификатора override. Это место должно располагаться после окончания блока формальных параметров метода,
+        // а также после всех возможных суффиксов, которыми может быть снабжён этот метод.
+        MethodCharm method_charm
+            {
+             .is_const_suffix = Method->isConst(),
+             .is_final_attr = Method->hasAttr<clang::FinalAttr>(),
+             .method_ref_kind = Method->getRefQualifier(),
+             .spec_type = Method->getExceptionSpecType()
+            };
+        method_end_pos = SkipMethodParamsSuffixes(method_end_pos, method_term_length, method_charm);
 
+        // Позиция предстоящей вставки спецификатора override найдена в method_end_pos.
         SourceLocation override_insert_loc =
             method_end_loc.getLocWithOffset(method_end_pos - SM.getCharacterData(method_end_loc));
         Rewrite.InsertTextAfter(override_insert_loc, " override"s);
@@ -132,8 +267,8 @@ void RefactorHandler::handle_derived_class(const CXXRecordDecl* ClassDecl, Diagn
 //todo: ниже необходимо реализовать матчеры для поиска узлов AST
 auto NvDtorMatcher()
 {
-    // Матчер обнаружения только невиртуальных деструкторов и только в том случае, если класс, для которого такой деструктор определен,
-    // имеет какие-либо производные от него классы.
+    // Матчер обнаружения всех невиртуальных деструкторов. Дополнительный анализ на предмет того, есть ли у класса, для которого такой деструктор
+    // определен, какие-либо производные от него классы, будет выполнен позже при завершении построения AST всей данной единицы трансляции.
     return cxxDestructorDecl
             (unless(isVirtual()))        // Условие удовлетворяется, если деструктор невиртуальный.
             .bind("nonVirtualDestructorDecl");
@@ -159,7 +294,7 @@ auto NoRefConstVarInRangeLoopMatcher()
         .bind("NonReferenceConstRangeLoopVar");
 }
 
-auto AllClassesMatcher()
+auto AllDerivedClassesMatcher()
 {
     // Матчер перечисления всех классов, кроме тех, что не имеют никаких предков.
     return cxxRecordDecl(hasAnyBase(anything())).bind("DerivedClass");
@@ -173,7 +308,7 @@ ComplexConsumer::ComplexConsumer(Rewriter& Rewrite, const ConsumerParams& Parame
     Finder.addMatcher(NvDtorMatcher(), &Handler);
     Finder.addMatcher(NoOverrideMatcher(), &Handler);
     Finder.addMatcher(NoRefConstVarInRangeLoopMatcher(), &Handler);
-    Finder.addMatcher(AllClassesMatcher(), &Handler);
+    Finder.addMatcher(AllDerivedClassesMatcher(), &Handler);
 }
 
 // Метод HandleTranslationUnit вызывается для каждого файла.
