@@ -28,6 +28,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_executable(refactor_tool RefactorTool.cpp)
 add_library(refactor_tool_imp STATIC RefactorLib.cpp)
 
+if(USE_ASAN)
+  target_compile_options(refactor_tool PRIVATE -fsanitize=address)
+  target_compile_options(refactor_tool_imp PRIVATE -fsanitize=address)
+endif(USE_ASAN)
+
 # Configure include directories for 'plugin'
 target_include_directories(
   refactor_tool
