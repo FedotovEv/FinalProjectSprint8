@@ -23,8 +23,8 @@ RUN ln -fs /usr/bin/g++-15 /usr/bin/g++
 RUN ln -fs /usr/bin/gcc-15 /usr/bin/gcc
 
 ARG USERNAME=dev
-ARG USER_UID
-ARG USER_GID
+ARG USER_UID=1000
+ARG USER_GID=1000
 
 RUN printf "\n\n\nReceived args:\n\tUSERNAME=$USERNAME\n\tUSER_UID=$USER_UID\n\tUSER_GID=$USER_GID\n"
 RUN test -n "$USER_UID" && test -n "$USER_GID" || (printf "\n\n\n\tERROR: USER_UID (equal to '$USER_UID') or USER_GID (equal to '$USER_GID') is not set!\n\n\n" && exit 1)

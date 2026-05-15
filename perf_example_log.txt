@@ -1,0 +1,43 @@
+
+clang++ perf_example.cpp -g -O3 -o perf_example
+
+-------- Профилирование до рефакторинга --------
+perf stat -e cycles ./perf_example
+
+ Performance counter stats for './perf_example':
+
+     8 192 403 084      cycles
+
+       2,560011741 seconds time elapsed
+
+       1,300791000 seconds user
+       1,258797000 seconds sys
+
+-------- Выполнение рефакторинга --------
+./refactor_tool perf_example.cpp
+/workspaces/FinalProjectSprint8/build/perf_example.cpp:14:21: warning: unused variable 'data' [-Wunused-variable]
+   14 |         const auto& data = obj.data[0];
+      |                     ^~~~
+/workspaces/FinalProjectSprint8/build/perf_example.cpp:12:21: warning: loop variable 'obj' creates a copy from type 'HeavyObject const' [-Wrange-loop-construct]
+   12 |     for (const auto obj : vec)             // Копирование без &
+      |                     ^
+/workspaces/FinalProjectSprint8/build/perf_example.cpp:12:10: note: use reference type 'HeavyObject const &' to prevent copying
+   12 |     for (const auto obj : vec)             // Копирование без &
+      |          ^~~~~~~~~~~~~~~~
+      |                     &
+/workspaces/FinalProjectSprint8/build/perf_example.cpp:12:21: remark: Переменная диапазонного цикла преобразована в ссылку
+   12 |     for (const auto obj : vec)             // Копирование без &
+      |                     ^
+2 warnings generated.
+
+-------- Профилирование после рефакторинга --------
+ perf stat -e cycles ./perf_example
+
+ Performance counter stats for './perf_example':
+
+     6 757 613 404      cycles
+
+       2,174180671 seconds time elapsed
+
+       0,847552000 seconds user
+       1,325300000 seconds sys

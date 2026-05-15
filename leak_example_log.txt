@@ -1,0 +1,26 @@
+
+clang++ leak_example.cpp -fsanitize=address -o leak_example
+
+----------- До рефакторинга -----------
+./leak_example
+
+=================================================================
+==2832967==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 4000 byte(s) in 1 object(s) allocated from:
+    #0 0x55a4e20788e1 in operator new[](unsigned long) (/home/fedotov/repos/YandexPraktikumMidCPP/Sprint8/FinalProjectSprint8/build/leak_example+0x1058e1) (BuildId: e43deace56b4146f2fd76148dc64860e3a94f0bd)
+    #1 0x55a4e207abdd in Derived::Derived() (/home/fedotov/repos/YandexPraktikumMidCPP/Sprint8/FinalProjectSprint8/build/leak_example+0x107bdd) (BuildId: e43deace56b4146f2fd76148dc64860e3a94f0bd)
+    #2 0x55a4e207ab67 in main (/home/fedotov/repos/YandexPraktikumMidCPP/Sprint8/FinalProjectSprint8/build/leak_example+0x107b67) (BuildId: e43deace56b4146f2fd76148dc64860e3a94f0bd)
+    #3 0x7ba7fce2a1c9 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+    #4 0x7ba7fce2a28a in __libc_start_main csu/../csu/libc-start.c:360:3
+    #5 0x55a4e1f9f354 in _start (/home/fedotov/repos/YandexPraktikumMidCPP/Sprint8/FinalProjectSprint8/build/leak_example+0x2c354) (BuildId: e43deace56b4146f2fd76148dc64860e3a94f0bd)
+
+SUMMARY: AddressSanitizer: 4000 byte(s) leaked in 1 allocation(s).
+
+----------- Команда рефакторинга -----------
+./refactor_tool leak_example.cpp
+/workspaces/FinalProjectSprint8/build/leak_example.cpp:6:5: remark: Выполнена виртуализация деструктора
+    6 |     ~Base() // Невиртуальный
+      |     ^
+----------- После рефакторинга -----------
+./leak_example

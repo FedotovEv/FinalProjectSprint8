@@ -7,12 +7,34 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug",
+            "name": "Debug refactor",
             "program": "${workspaceFolder}/build/refactor_tool",
             "args": ["${workspaceFolder}/tests/tests_data/for_refactor.cpp"],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "GCC: Build Debug",
             "initCommands": ["settings set target.disable-aslr false"]
-        }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug refactor log file",
+            "program": "${workspaceFolder}/build/refactor_tool",
+            "args": ["${workspaceFolder}/tests/tests_data/for_refactor.cpp",
+                    "--log-file=error.txt",
+                    "--log-act-only"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "GCC: Build Debug",
+            "initCommands": ["settings set target.disable-aslr false"]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Unit tests",
+            "program": "${workspaceFolder}/build/refactor_tool_tests",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "GCC: Build Debug",
+            "initCommands": ["settings set target.disable-aslr false"]
+        }        
     ]
 }

@@ -1,0 +1,19 @@
+
+name: Run Program on Commit
+
+# Триггер: запускать при push в любую ветку
+on: workflow_dispatch
+
+jobs:
+  build:
+    # Тип машины, на которой будет выполняться действие
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Получаем код репозитория во внутреннюю файловую систему исполняющей задание виртуальной машины.
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. Запуск ASAN-теста
+      - name: Run leak example test
+        run: ./run_tests.sh

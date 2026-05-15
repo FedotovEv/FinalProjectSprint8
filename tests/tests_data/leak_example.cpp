@@ -1,19 +1,31 @@
 #include <iostream>
 
-class Base {
+class Base
+{
 public:
-    virtual ~Base() {}  // Невиртуальный
+    ~Base() // Невиртуальный
+    {}
 };
 
-class Derived : public Base {
+class Derived : public Base
+{
 public:
-    Derived() { data = new int[1000]; }  // Выделение памяти
-    ~Derived() { delete[] data; }  // Освобождение в деструкторе наследника
+    Derived()
+    {
+        data = new int[1000];   // Выделение памяти
+    }
+
+    ~Derived()   // Освобождение в деструкторе наследника
+    {
+        delete[] data;
+    }
+
 private:
     int* data;
 };
 
-int main() {
+int main()
+{
     Base* obj = new Derived();
     delete obj;  // Утечка, т.к. вызывается деструктор Base, а не Derived
     return 0;

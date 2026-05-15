@@ -2,11 +2,11 @@
   "name": "Ubuntu25.04 with GCC15",
   "build": {
       "dockerfile": "./Dockerfile",
-      "context": ".",
-      "args": {
-        "USER_UID": "${localEnv:USER_UID}",
-        "USER_GID": "${localEnv:USER_GID}"
-      }
+      "context": "."
+      //"args": {
+      //  "USER_UID": "${localEnv:USER_UID}",
+      //  "USER_GID": "${localEnv:USER_GID}"
+      //}
   },
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
   "remoteUser": "dev",
